@@ -1,0 +1,32 @@
+# =====================================================================
+# QConnect-AI Cloud :: qc-evaluation HorizontalPodAutoscaler
+# ---------------------------------------------------------------------
+# Scales qc-evaluation 2..10 replicas targeting 70% average CPU.
+# Requires metrics-server (resource metrics) in the cluster.
+# =====================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: qc-evaluation
+  labels:
+    app.kubernetes.io/name: qc-evaluation
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: qc-evaluation
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 60

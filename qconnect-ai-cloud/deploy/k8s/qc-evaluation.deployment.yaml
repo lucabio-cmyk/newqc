@@ -1,0 +1,91 @@
+# =====================================================================
+# QConnect-AI Cloud :: qc-evaluation Deployment
+# ---------------------------------------------------------------------
+# Orchestration core (Westgard/QConnect/Sigma + AI). Stateless HTTP
+# service on container port 8000. Config comes from the ConfigMap; the
+# secrets come from the externally-managed Secret. Image tag is meant to
+# be overridden by kustomize (see kustomization.yaml `images:`).
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qc-evaluation
+  labels:
+    app.kubernetes.io/name: qc-evaluation
+    app.kubernetes.io/component: api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: qc-evaluation
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: qc-evaluation
+        app.kubernetes.io/component: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: qc-evaluation
+          # Placeholder image; overridden via kustomize `images:` block.
+          image: registry.example.com/qconnect-ai/qc-evaluation:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: qconnect-ai-config
+            - secretRef:
+                name: qconnect-ai-secrets
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            # readOnlyRootFilesystem=true means writable scratch must be
+            # provided explicitly. /tmp covers most app temp-file needs.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

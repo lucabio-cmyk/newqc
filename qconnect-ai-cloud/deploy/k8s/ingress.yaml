@@ -1,0 +1,39 @@
+# =====================================================================
+# QConnect-AI Cloud :: Ingress
+# ---------------------------------------------------------------------
+# Routes external HTTPS traffic for api.qconnect-ai.example to the
+# qc-evaluation Service (:80). Assumes an ingress-nginx controller.
+#
+# TLS: the certificate is expected in the Secret named below. In
+# production, let cert-manager issue it automatically by uncommenting
+# the cert-manager annotation and creating a matching ClusterIssuer.
+# =====================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: qconnect-ai
+  labels:
+    app.kubernetes.io/name: qc-evaluation
+    app.kubernetes.io/component: ingress
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+    # Uncomment to have cert-manager provision/renew the TLS cert:
+    # cert-manager.io/cluster-issuer: "letsencrypt-prod"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.qconnect-ai.example
+      secretName: qconnect-ai-tls
+  rules:
+    - host: api.qconnect-ai.example
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: qc-evaluation
+                port:
+                  number: 80
