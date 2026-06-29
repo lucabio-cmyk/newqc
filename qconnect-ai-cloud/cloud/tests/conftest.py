@@ -64,13 +64,110 @@ def failing_qc_data() -> dict:
 
 @pytest.fixture()
 def client():
-    """Return a TestClient for the qc_evaluation FastAPI app.
+    """Return a TestClient for the qc_evaluation FastAPI app (no DB).
 
-    Skips the whole test module if FastAPI / its test deps are not installed in
-    the current environment.
+    Explicitly overrides the app's ``get_db`` dependency to yield ``None`` so the
+    deterministic no-DB code path is taken regardless of whether asyncpg /
+    Postgres exist in the environment. This keeps the offline tests fast (no
+    multi-second DB connection attempts) and DB-free. The override is cleared on
+    teardown.
+
+    Skips the whole test module if FastAPI / its test deps are not installed.
     """
     fastapi_testclient = pytest.importorskip("fastapi.testclient")
     # Import the app only after path wiring above is in place.
     from cloud.services.qc_evaluation import main as qc_main  # noqa: WPS433
 
-    return fastapi_testclient.TestClient(qc_main.app)
+    # Override the exact get_db object the routes reference. main.py may import
+    # get_db via the container path ("dependencies") rather than the fully
+    # qualified package path, so use qc_main.get_db (not a fresh import) as the
+    # override key — otherwise the override silently fails to bind.
+    get_db = qc_main.get_db
+
+    async def _no_db():
+        yield None
+
+    qc_main.app.dependency_overrides[get_db] = _no_db
+    try:
+        yield fastapi_testclient.TestClient(qc_main.app)
+    finally:
+        qc_main.app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture()
+def client_with_db():
+    """Return a TestClient backed by an in-memory aiosqlite database.
+
+    Event-loop sharing is the crux: Starlette's ``TestClient`` drives the ASGI
+    app through a single *blocking portal* (one dedicated event loop running in a
+    background thread for the life of the client). aiosqlite binds its DBAPI
+    connection to the loop that first opened it, so the in-memory database is
+    only usable from that one loop. We therefore run schema setup AND every
+    request's session on the portal's loop via ``client.portal.call(...)``.
+
+    A single connection is pinned with :class:`~sqlalchemy.pool.StaticPool` (an
+    in-memory SQLite DB lives only as long as its connection — StaticPool keeps
+    exactly one, so rows persist across requests). Tests inspect rows with the
+    exposed ``run_db`` helper, which also runs on the portal loop.
+    """
+    pytest.importorskip("aiosqlite")
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    from cloud.db.models import Base
+    from cloud.services.qc_evaluation import main as qc_main  # noqa: WPS433
+
+    # Use the exact get_db object the routes reference (see the ``client``
+    # fixture note) so the override actually binds.
+    get_db = qc_main.get_db
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _db():
+        session = sessionmaker()
+        try:
+            yield session
+        finally:
+            await session.close()
+
+    qc_main.app.dependency_overrides[get_db] = _db
+
+    async def _create() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    async def _drop() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+        await engine.dispose()
+
+    # Entering the TestClient context starts its blocking portal/event loop.
+    with fastapi_testclient.TestClient(qc_main.app) as client:
+        client.portal.call(_create)
+
+        def run_db(coro_factory):
+            """Run ``coro_factory(session)`` on the portal loop with a session.
+
+            ``coro_factory`` is an async function taking an ``AsyncSession`` and
+            returning a value; it executes on the same loop as the requests so it
+            sees committed rows in the shared in-memory DB.
+            """
+
+            async def _runner():
+                async with sessionmaker() as session:
+                    return await coro_factory(session)
+
+            return client.portal.call(_runner)
+
+        client.run_db = run_db  # type: ignore[attr-defined]
+        try:
+            yield client
+        finally:
+            client.portal.call(_drop)
+            qc_main.app.dependency_overrides.pop(get_db, None)

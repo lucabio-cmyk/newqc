@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     rca_capa_url: str = Field(default="http://rca-capa:8003")
     analytics_url: str = Field(default="http://analytics:8004")
     ml_inference_timeout_seconds: float = Field(default=2.0)
+    rca_capa_timeout_seconds: float = Field(default=2.0)
+    auto_capa: bool = Field(
+        default=True,
+        description="When True, a FAIL result auto-drafts a CAPA via the rca_capa service.",
+    )
 
     # --- observability ----------------------------------------------------- #
     log_level: str = Field(default="INFO")

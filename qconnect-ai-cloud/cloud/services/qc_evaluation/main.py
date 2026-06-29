@@ -85,6 +85,17 @@ except Exception:  # pragma: no cover - monorepo/test layout
     )
 
 try:
+    from cloud.db.repositories import (  # type: ignore
+        AIPredictionRepository,
+        CAPARepository,
+        QCResultRepository,
+    )
+except Exception:  # pragma: no cover - persistence layer unavailable
+    AIPredictionRepository = None  # type: ignore
+    CAPARepository = None  # type: ignore
+    QCResultRepository = None  # type: ignore
+
+try:
     from cloud.api.middleware.correlation import (  # type: ignore
         CORRELATION_HEADER,
         AuditLoggingMiddleware,
@@ -139,6 +150,10 @@ HTTP_REQUESTS_TOTAL = Counter(
     "qconnect_http_requests_total",
     "Total HTTP requests served, by method, path and status code.",
     ["method", "path", "status"],
+)
+CAPA_AUTODRAFTED_TOTAL = Counter(
+    "qconnect_capa_autodrafted_total",
+    "Total CAPA records auto-drafted by the evaluator on a FAIL result.",
 )
 
 
@@ -301,6 +316,45 @@ async def _call_ml_inference(
             return resp.json()
     except Exception as exc:
         logger.warning("ML inference unavailable ({}); degrading: {}", url, exc)
+        return None
+
+
+async def _call_rca_capa(
+    qc: "schemas.QCDataInput",
+    response: "schemas.QCEvaluationResponse",
+    correlation_id: str | None,
+) -> dict[str, Any] | None:
+    """Draft a CAPA via the rca_capa service (best-effort).
+
+    POSTs to ``{rca_capa_url}/capa`` with a body compatible with the service's
+    ``CAPARequest`` schema (analyte_code, analyte_type, qc_status,
+    westgard_rule_violated, severity, incident_date). Returns the drafted-CAPA
+    dict, or ``None`` on any failure so a down rca_capa never fails evaluation.
+    """
+    settings = _safe_settings()
+    base_url = getattr(settings, "rca_capa_url", "http://rca-capa:8003")
+    timeout = float(getattr(settings, "rca_capa_timeout_seconds", 2.0))
+    url = f"{base_url.rstrip('/')}/capa"
+
+    westgard = (response.legacy_results or {}).get("westgard") or {}
+    body = {
+        "analyte_code": qc.analyte_code,
+        "analyte_type": qc.analyte_type.value,
+        "qc_status": response.qc_status.value,
+        "westgard_rule_violated": westgard.get("rule_violated"),
+        "severity": response.severity.value,
+        "incident_date": _utcnow().isoformat(),
+    }
+    headers: dict[str, str] = {}
+    if correlation_id:
+        headers[CORRELATION_HEADER] = correlation_id
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, json=body, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as exc:
+        logger.warning("rca_capa unavailable ({}); skipping CAPA: {}", url, exc)
         return None
 
 
@@ -539,7 +593,26 @@ async def evaluate_qc(
         timestamp=_utcnow(),
     )
 
-    await _persist_result(db, qc, response)
+    qc_result_id = await _persist_result(db, qc, response)
+
+    # --- Auto-CAPA on FAIL (best-effort; rca_capa down must NOT fail eval). --- #
+    settings = _safe_settings()
+    auto_capa = bool(getattr(settings, "auto_capa", True))
+    if response.qc_status == schemas.QCStatusEnum.FAIL and auto_capa:
+        capa = await _call_rca_capa(qc, response, corr_id)
+        if capa is not None:
+            response.capa = capa
+            CAPA_AUTODRAFTED_TOTAL.inc()
+            if db is not None and CAPARepository is not None:
+                try:
+                    await CAPARepository(db).create(capa, qc_result_id)
+                    await db.commit()
+                except Exception as exc:
+                    logger.warning("CAPA persist failed; rolling back: {}", exc)
+                    try:
+                        await db.rollback()
+                    except Exception:  # pragma: no cover - defensive
+                        pass
 
     # --- Metrics: count evaluations + severity. The request-duration histogram
     # is observed by the HTTP middleware for the evaluate route. ------------- #
@@ -582,10 +655,14 @@ async def lab_qc_status(
     table over the last ``window_hours``. With no DB configured it returns an
     empty summary rather than failing.
     """
-    if db is None:
+    if db is None or QCResultRepository is None:
         return schemas.LabQCStatusSummary(lab_id=lab_id)
-    # TODO: replace with a real aggregation query against qc_results.
-    return schemas.LabQCStatusSummary(lab_id=lab_id)
+    try:
+        counts = await QCResultRepository(db).lab_status_counts(lab_id)
+        return schemas.LabQCStatusSummary(**counts)
+    except Exception as exc:
+        logger.warning("lab status aggregation failed: {}", exc)
+        return schemas.LabQCStatusSummary(lab_id=lab_id)
 
 
 @app.post(
@@ -673,33 +750,49 @@ async def health() -> "schemas.HealthStatus":
 # Best-effort persistence / lookup helpers (stubs over the DB session)
 # --------------------------------------------------------------------------- #
 async def _load_history(db: Any, qc: "schemas.QCDataInput") -> list[float]:
-    """Load recent control values for this analyte/level/lot.
+    """Load recent control values for this analyte/lot from ``qc_results``.
 
-    PLACEHOLDER: returns an empty list when no DB is configured. With a session
-    a real implementation would query ``qc_results`` ordered by ``test_date``.
+    Best-effort: returns ``[]`` when no DB is configured or on any query error,
+    so the engines always receive a (possibly empty) chronological history.
     """
-    if db is None:
+    if db is None or QCResultRepository is None:
         return []
     try:
-        # TODO: implement the real query. Kept as a stub to avoid coupling to a
-        # specific ORM model in this scaffold.
-        return []
-    except Exception as exc:  # pragma: no cover
+        repo = QCResultRepository(db)
+        return await repo.recent_history(qc.analyte_code, qc.qc_lot_id)
+    except Exception as exc:
         logger.debug("history load failed: {}", exc)
         return []
 
 
 async def _persist_result(
     db: Any, qc: "schemas.QCDataInput", response: "schemas.QCEvaluationResponse"
-) -> None:
-    """Persist an evaluated result (best-effort, no-op without a DB)."""
-    if db is None:
-        return
+) -> str | None:
+    """Persist an evaluated result and its AI prediction (best-effort).
+
+    Writes a ``qc_results`` row, then an ``ai_predictions`` row when AI data is
+    present, and commits. Returns the new qc_results id (as a string) so the
+    caller can link a CAPA; returns ``None`` without a DB or on any failure
+    (after rolling back). Never raises.
+    """
+    if db is None or QCResultRepository is None:
+        return None
     try:
-        # TODO: insert into qc_results / ai_predictions. Stubbed in scaffold.
-        await db.flush() if hasattr(db, "flush") else None
-    except Exception as exc:  # pragma: no cover
-        logger.debug("persist skipped/failed: {}", exc)
+        qc_dict = qc.model_dump(mode="json")
+        resp_dict = response.model_dump(mode="json")
+        qc_result = await QCResultRepository(db).create(qc_dict, resp_dict)
+        ai = resp_dict.get("ai_insights") or {}
+        if ai and AIPredictionRepository is not None:
+            await AIPredictionRepository(db).create(qc_result.id, ai)
+        await db.commit()
+        return str(qc_result.id)
+    except Exception as exc:
+        logger.warning("persist failed; rolling back: {}", exc)
+        try:
+            await db.rollback()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return None
 
 
 async def _check_db() -> bool:

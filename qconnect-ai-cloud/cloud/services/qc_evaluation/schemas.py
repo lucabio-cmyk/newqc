@@ -191,6 +191,10 @@ class QCEvaluationResponse(BaseModel):
         default=False,
         description="True when produced by an edge node without cloud connectivity",
     )
+    capa: dict | None = Field(
+        default=None,
+        description="Auto-drafted CAPA (from rca_capa) when the result FAILs; else None.",
+    )
     timestamp: datetime = Field(default_factory=_utcnow)
 
 
@@ -243,6 +247,7 @@ class LabQCStatusSummary(BaseModel):
     lab_id: str
     window_hours: int = 24
     total_results: int = 0
+    status_counts: dict[str, int] = Field(default_factory=dict)
     pass_count: int = 0
     fail_count: int = 0
     review_required_count: int = 0
