@@ -1,0 +1,6 @@
+# ML-Inference service dependencies.
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+pydantic>=2.6,<3
+numpy>=1.26
+scikit-learn>=1.4

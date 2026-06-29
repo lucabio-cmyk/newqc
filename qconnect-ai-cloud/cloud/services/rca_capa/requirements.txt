@@ -1,0 +1,5 @@
+# RCA / CAPA service dependencies.
+fastapi>=0.110,<1
+uvicorn[standard]>=0.29,<1
+pydantic>=2.6,<3
+neo4j>=5.18

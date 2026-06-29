@@ -1,0 +1,281 @@
+# =====================================================================
+# QConnect-AI Enterprise :: Cloud stack
+# ---------------------------------------------------------------------
+# This compose file lives at the cloud project root (qconnect-ai-cloud/),
+# so all build contexts and bind-mounts are relative to that directory.
+#
+#   docker compose up -d
+#   docker compose ps
+#   docker compose logs -f qc-evaluation
+#
+# Ports (host -> container):
+#   qc-evaluation       8000 -> 8000
+#   ml-inference        8001 -> 8001
+#   federated-learning  8002 -> 8002
+#   rca-capa            8003 -> 8003
+#   analytics           8004 -> 8004
+#   postgres            5432 -> 5432
+#   timescaledb         5433 -> 5432
+#   redis               6379 -> 6379
+#   neo4j (http/bolt)   7474/7687
+#   rabbitmq (amqp/ui)  5672/15672
+# =====================================================================
+
+name: qconnect-ai-cloud
+
+services:
+  # ------------------------------------------------------------------ #
+  # Primary relational store. init.sql bootstraps the full schema.
+  # pgcrypto ships with the contrib package; timescaledb/vector lines in
+  # init.sql are best-effort (see the comment at the top of init.sql).
+  # ------------------------------------------------------------------ #
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-qconnect}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-qconnect}
+      POSTGRES_DB: ${POSTGRES_DB:-qconnect}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # init.sql runs once on an empty data directory.
+      - ./cloud/databases/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-qconnect} -d ${POSTGRES_DB:-qconnect}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # TimescaleDB for high-cardinality QC time-series (separate instance).
+  # Exposed on host port 5433 to avoid clashing with primary postgres.
+  # ------------------------------------------------------------------ #
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_USER: ${TIMESCALE_USER:-qconnect}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD:-qconnect}
+      POSTGRES_DB: ${TIMESCALE_DB:-qconnect_ts}
+    ports:
+      - "5433:5432"
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TIMESCALE_USER:-qconnect} -d ${TIMESCALE_DB:-qconnect_ts}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # Redis: control-limit cache + ephemeral coordination.
+  # ------------------------------------------------------------------ #
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # Neo4j: RCA / CAPA failure-knowledge graph (enterprise w/ APOC+GDS).
+  # ------------------------------------------------------------------ #
+  neo4j:
+    image: neo4j:5-enterprise
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/qconnect-neo4j}
+      NEO4J_ACCEPT_LICENSE_AGREEMENT: "yes"
+      NEO4J_PLUGINS: '["apoc","graph-data-science"]'
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # RabbitMQ: federated-learning client/server message bus.
+  # ------------------------------------------------------------------ #
+  rabbitmq:
+    image: rabbitmq:3.12-management-alpine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}
+    ports:
+      - "5672:5672"     # AMQP
+      - "15672:15672"   # management UI
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # QC-Evaluation: orchestration core (Westgard/QConnect/Sigma + AI).
+  # ------------------------------------------------------------------ #
+  qc-evaluation:
+    build:
+      context: ./cloud/services/qc_evaluation
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ml-inference:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # ML-Inference: AI enrichment (failure prediction, anomaly detection).
+  # ------------------------------------------------------------------ #
+  ml-inference:
+    build:
+      context: ./cloud/services/ml_inference
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # Federated-Learning: privacy-preserving cross-lab model training.
+  # ------------------------------------------------------------------ #
+  federated-learning:
+    build:
+      context: ./cloud/services/federated_learning
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8002/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # RCA-CAPA: root-cause analysis over the Neo4j knowledge graph.
+  # ------------------------------------------------------------------ #
+  rca-capa:
+    build:
+      context: ./cloud/services/rca_capa
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8003/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - qconnect-ai-network
+
+  # ------------------------------------------------------------------ #
+  # Analytics: cross-lab KPI aggregation and reporting.
+  # ------------------------------------------------------------------ #
+  analytics:
+    build:
+      context: ./cloud/services/analytics
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8004:8004"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8004/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - qconnect-ai-network
+
+# ---------------------------------------------------------------------- #
+# Named volumes (persist data across container recreation).
+# ---------------------------------------------------------------------- #
+volumes:
+  postgres-data:
+  timescale-data:
+  redis-data:
+  neo4j-data:
+  neo4j-logs:
+  rabbitmq-data:
+
+# ---------------------------------------------------------------------- #
+# Dedicated bridge network for inter-service DNS by service name.
+# ---------------------------------------------------------------------- #
+networks:
+  qconnect-ai-network:
+    driver: bridge
