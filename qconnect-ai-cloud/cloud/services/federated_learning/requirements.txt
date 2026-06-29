@@ -3,3 +3,5 @@ fastapi>=0.110,<1
 uvicorn[standard]>=0.29,<1
 pydantic>=2.6,<3
 numpy>=1.26
+prometheus-client>=0.20
+loguru>=0.7
