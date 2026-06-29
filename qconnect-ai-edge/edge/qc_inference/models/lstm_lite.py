@@ -186,9 +186,7 @@ class LSTMLite:
             hour = round(step * i, 2)
             # Risk accrues monotonically across the horizon.
             frac = i / TIMELINE_STEPS
-            timeline.append(
-                {"hour": hour, "probability": round(prob * frac, 4)}
-            )
+            timeline.append({"hour": hour, "probability": round(prob * frac, 4)})
         return {
             "failure_probability_48h": round(prob, 4),
             "timeline_hours": timeline,

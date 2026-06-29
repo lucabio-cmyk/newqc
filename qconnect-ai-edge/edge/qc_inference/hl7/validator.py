@@ -47,9 +47,7 @@ def validate_message(raw: str) -> tuple[bool, list[str]]:
 
     # Strip framing for the structural checks.
     text = raw.replace(_VT, "").replace(_FS, "").strip("\r\n ")
-    segments = [
-        s for s in text.replace("\r\n", "\r").replace("\n", "\r").split("\r") if s.strip()
-    ]
+    segments = [s for s in text.replace("\r\n", "\r").replace("\n", "\r").split("\r") if s.strip()]
     if not segments:
         reasons.append("no segments after stripping framing")
         return False, reasons

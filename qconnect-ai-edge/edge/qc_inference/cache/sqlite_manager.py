@@ -87,8 +87,7 @@ class EdgeCache:
     def _init_db(self) -> None:
         """Create tables and indexes if they do not already exist."""
         with self._conn:  # transaction
-            self._conn.executescript(
-                """
+            self._conn.executescript("""
                 CREATE TABLE IF NOT EXISTS qc_results_pending (
                     id                INTEGER PRIMARY KEY AUTOINCREMENT,
                     lab_id            TEXT NOT NULL,
@@ -126,8 +125,7 @@ class EdgeCache:
                     parsed_analyte_code  TEXT,
                     timestamp            TEXT NOT NULL
                 );
-                """
-            )
+                """)
 
     # ------------------------------------------------------------------ #
     # QC results
@@ -393,9 +391,7 @@ class EdgeCache:
     # ------------------------------------------------------------------ #
     # Raw HL7 messages
     # ------------------------------------------------------------------ #
-    def save_hl7_raw(
-        self, raw_message: str, parsed_analyte_code: str | None = None
-    ) -> int:
+    def save_hl7_raw(self, raw_message: str, parsed_analyte_code: str | None = None) -> int:
         """Archive a raw HL7 message for audit/replay; returns the row id."""
         try:
             with self._conn:
@@ -428,8 +424,7 @@ class EdgeCache:
         try:
             with self._conn:
                 cur1 = self._conn.execute(
-                    "DELETE FROM qc_results_pending "
-                    "WHERE uploaded = 1 AND timestamp < ?",
+                    "DELETE FROM qc_results_pending " "WHERE uploaded = 1 AND timestamp < ?",
                     (cutoff,),
                 )
                 cur2 = self._conn.execute(

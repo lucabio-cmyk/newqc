@@ -11,8 +11,8 @@ WESTGARD_RULES: tuple[str, ...] = (
     "2-2S",  # two consecutive beyond same +/-2 SD -> systematic error, reject
     "R-4S",  # range of two consecutive >= 4 SD -> random error, reject
     "4-1S",  # four consecutive beyond same +/-1 SD -> systematic error, reject
-    "10x",   # ten consecutive on the same side of the mean -> systematic error
-    "7T",    # seven consecutive trending up or down -> systematic drift
+    "10x",  # ten consecutive on the same side of the mean -> systematic error
+    "7T",  # seven consecutive trending up or down -> systematic drift
     "1-2S",  # warning only (gates the rejection rules)
 )
 

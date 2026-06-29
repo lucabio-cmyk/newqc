@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncIterator
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from loguru import logger
 
@@ -146,7 +146,10 @@ async def evaluate(qc: QCDataInput) -> QCEvaluationResponse:
     corr = qc.correlation_id or _new_correlation_id()
     logger.info(
         "[{}] evaluate analyte={} value={} analyzer={}",
-        corr, qc.analyte_code, qc.result_value, qc.analyzer_id,
+        corr,
+        qc.analyte_code,
+        qc.result_value,
+        qc.analyzer_id,
     )
 
     # --- Pull local history + cached limits (both offline-safe). ------- #
@@ -156,9 +159,7 @@ async def evaluate(qc: QCDataInput) -> QCEvaluationResponse:
     legacy: dict[str, dict] = {}
 
     # --- Westgard (always runs; pure-python). ------------------------- #
-    westgard = _westgard.evaluate(
-        qc.result_value, qc.target_value, qc.sd_value, history
-    )
+    westgard = _westgard.evaluate(qc.result_value, qc.target_value, qc.sd_value, history)
     legacy["westgard"] = westgard
 
     # --- QConnect (uses cached percentile limits + local history). ---- #
@@ -214,7 +215,11 @@ async def evaluate(qc: QCDataInput) -> QCEvaluationResponse:
     elapsed_ms = (time.perf_counter() - started) * 1000.0
     logger.info(
         "[{}] result={} severity={} confidence={:.2f} in {:.1f}ms",
-        corr, status.value, severity.value, confidence, elapsed_ms,
+        corr,
+        status.value,
+        severity.value,
+        confidence,
+        elapsed_ms,
     )
     if elapsed_ms > 100:
         logger.warning("[{}] evaluation exceeded 100ms budget ({:.1f}ms)", corr, elapsed_ms)

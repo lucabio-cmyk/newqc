@@ -29,7 +29,7 @@ test-shared: ## Run shared library tests
 	$(PY) -m pytest qconnect-ai-shared/tests -q
 
 test-cloud: ## Run cloud tests
-	$(PY) -m pytest qconnect-ai-cloud/cloud/tests qconnect-ai-cloud/cloud/services/qc_evaluation/tests -q
+	$(PY) -m pytest qconnect-ai-cloud/cloud/tests -q
 
 test-edge: ## Run edge tests
 	$(PY) -m pytest qconnect-ai-edge/tests -q

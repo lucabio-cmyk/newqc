@@ -112,7 +112,9 @@ class CloudUploader:
                         "CloudUploader: batch upload failed; {} records remain queued",
                         len(row_ids),
                     )
-                    return self._metrics(total_uploaded, total_bytes, batches, started, offline=True)
+                    return self._metrics(
+                        total_uploaded, total_bytes, batches, started, offline=True
+                    )
 
                 self.cache.mark_uploaded(row_ids)
                 total_uploaded += len(row_ids)
@@ -128,9 +130,7 @@ class CloudUploader:
         logger.info("CloudUploader: sync complete {}", metrics)
         return metrics
 
-    async def _upload_batch(
-        self, client: httpx.AsyncClient, payload: dict[str, Any]
-    ) -> bool:
+    async def _upload_batch(self, client: httpx.AsyncClient, payload: dict[str, Any]) -> bool:
         """POST a single batch with backoff; True on 2xx, False if unrecoverable."""
         url = f"{self.cloud_url}/api/v1/labs/{self.lab_id}/qc/batch"
         for attempt in range(self.max_attempts):
@@ -139,12 +139,15 @@ class CloudUploader:
                 if 200 <= resp.status_code < 300:
                     return True
                 if resp.status_code in (401, 403):
-                    logger.error("CloudUploader: auth rejected ({}); not retrying", resp.status_code)
+                    logger.error(
+                        "CloudUploader: auth rejected ({}); not retrying", resp.status_code
+                    )
                     return False
                 if 400 <= resp.status_code < 500:
                     logger.error(
                         "CloudUploader: client error {} ({}); not retrying",
-                        resp.status_code, resp.text[:200],
+                        resp.status_code,
+                        resp.text[:200],
                     )
                     return False
                 logger.warning("CloudUploader: server error {}; will retry", resp.status_code)
@@ -228,9 +231,7 @@ class CloudUploader:
             logger.info("pull_model_updates: refreshed models {}", updated)
         return {"updated": updated, "offline": False}
 
-    async def _download_model(
-        self, client: httpx.AsyncClient, name: str
-    ) -> bytes | None:
+    async def _download_model(self, client: httpx.AsyncClient, name: str) -> bytes | None:
         """Download a model binary by name (returns ``None`` on failure)."""
         url = f"{self.cloud_url}/api/v1/labs/{self.lab_id}/models/{name}/download"
         try:
@@ -285,7 +286,8 @@ class CloudUploader:
 
         logger.info(
             "CloudUploader.sync_loop started (interval={}s, cloud={})",
-            interval_seconds, self.cloud_url or "<unconfigured>",
+            interval_seconds,
+            self.cloud_url or "<unconfigured>",
         )
         while True:
             try:

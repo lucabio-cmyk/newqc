@@ -120,9 +120,7 @@ class QConnectEngine:
             "ucl": round(float(ucl), 6),
         }
 
-    def compare_with_westgard(
-        self, qconnect_result: dict, westgard_result: dict
-    ) -> dict:
+    def compare_with_westgard(self, qconnect_result: dict, westgard_result: dict) -> dict:
         """Reconcile the QConnect and Westgard verdicts.
 
         QConnect tends to be more tolerant of legitimately skewed distributions,

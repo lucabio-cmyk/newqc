@@ -76,9 +76,7 @@ def api_status():
                 names = {m["model_name"] for m in cached_models}
                 models["lstm"] = "lstm_lite" in names
                 models["rf"] = "random_forest" in names
-                models["version"] = next(
-                    (m.get("version") for m in cached_models), None
-                )
+                models["version"] = next((m.get("version") for m in cached_models), None)
         finally:
             cache.close()
 

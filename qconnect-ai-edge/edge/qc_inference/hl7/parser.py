@@ -63,12 +63,13 @@ class HL7Parser:
         """
         text = self._strip_mllp(raw)
         # HL7 segments are CR-terminated; be lenient about CRLF / LF.
-        segments = [s for s in text.replace("\r\n", "\r").replace("\n", "\r").split("\r") if s.strip()]
+        segments = [
+            s for s in text.replace("\r\n", "\r").replace("\n", "\r").split("\r") if s.strip()
+        ]
         if not segments:
             raise ValueError("Empty HL7 message")
 
         seps = self._encoding_chars(segments[0])
-        field_sep = seps["field"]
 
         msh = self._parse_msh(segments[0], seps)
         observations: list[dict[str, Any]] = []
@@ -117,10 +118,7 @@ class HL7Parser:
         now = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
         ctrl = message_control_id or "UNKNOWN"
         # MSH-1 is the field separator; MSH-2 carries the encoding characters.
-        msh = (
-            f"MSH|^~\\&|QCONNECT-EDGE|LAB|ANALYZER|LAB|{now}||ACK^R01|"
-            f"{ctrl}|P|2.5"
-        )
+        msh = f"MSH|^~\\&|QCONNECT-EDGE|LAB|ANALYZER|LAB|{now}||ACK^R01|" f"{ctrl}|P|2.5"
         msa = f"MSA|{code}|{ctrl}"
         return msh + "\r" + msa + "\r"
 

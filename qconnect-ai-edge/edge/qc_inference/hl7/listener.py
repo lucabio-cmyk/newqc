@@ -64,9 +64,7 @@ class MLLPListener:
 
     async def start(self) -> None:
         """Bind the socket and begin serving (returns once the server is up)."""
-        self._server = await asyncio.start_server(
-            self.handle_connection, self.host, self.port
-        )
+        self._server = await asyncio.start_server(self.handle_connection, self.host, self.port)
         sockets = ", ".join(str(s.getsockname()) for s in (self._server.sockets or []))
         logger.info("MLLP listener started on {}", sockets or f"{self.host}:{self.port}")
 
@@ -129,9 +127,7 @@ class MLLPListener:
     # ------------------------------------------------------------------ #
     # Internals
     # ------------------------------------------------------------------ #
-    async def _read_framed_message(
-        self, reader: asyncio.StreamReader
-    ) -> str | None:
+    async def _read_framed_message(self, reader: asyncio.StreamReader) -> str | None:
         """Read one MLLP-framed message; return its body or ``None`` on EOF.
 
         Waits for the VT start byte, then reads until the FS+CR end block.
@@ -153,8 +149,8 @@ class MLLPListener:
                 return None
             byte = chunk[0]
             if byte == FS:
-                # Expect a trailing CR; consume it if present.
-                trailing = await reader.read(1)
+                # Expect a trailing CR; consume (and discard) it if present.
+                await reader.read(1)
                 # If trailing wasn't CR, we still accept the message body.
                 break
             buffer.append(byte)
@@ -163,9 +159,7 @@ class MLLPListener:
                 return None
         return buffer.decode("utf-8", errors="replace")
 
-    async def _process_message(
-        self, raw: str, writer: asyncio.StreamWriter, peer: object
-    ) -> None:
+    async def _process_message(self, raw: str, writer: asyncio.StreamWriter, peer: object) -> None:
         """Validate, parse, ACK and dispatch a single HL7 message."""
         ok, reasons = validate_message(raw)
         if not ok:
@@ -191,9 +185,7 @@ class MLLPListener:
         except Exception as exc:  # noqa: BLE001 - callback isolation
             logger.exception("HL7 callback error (ctrl_id={}): {}", ctrl_id, exc)
 
-    def _send_ack(
-        self, writer: asyncio.StreamWriter, ctrl_id: str | None, code: str
-    ) -> None:
+    def _send_ack(self, writer: asyncio.StreamWriter, ctrl_id: str | None, code: str) -> None:
         """Frame and write an ACK back to the analyzer."""
         ack = self._parser.build_ack(ctrl_id, code=code)
         framed = bytes([VT]) + ack.encode("utf-8") + bytes([FS, CR])
