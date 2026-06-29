@@ -1,0 +1,32 @@
+# =====================================================================
+# QConnect-AI Cloud :: ml-inference HorizontalPodAutoscaler
+# ---------------------------------------------------------------------
+# Scales ml-inference 1..6 replicas targeting 70% average CPU.
+# Requires metrics-server in the cluster.
+# =====================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ml-inference
+  labels:
+    app.kubernetes.io/name: ml-inference
+    app.kubernetes.io/component: inference
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ml-inference
+  minReplicas: 1
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+    scaleUp:
+      stabilizationWindowSeconds: 60

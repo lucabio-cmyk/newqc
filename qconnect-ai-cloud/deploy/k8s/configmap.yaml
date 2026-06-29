@@ -1,0 +1,28 @@
+# =====================================================================
+# QConnect-AI Cloud :: Non-secret application configuration
+# ---------------------------------------------------------------------
+# Mounted into service pods via `envFrom`. Contains ONLY non-sensitive
+# values. Secrets (DATABASE_URL, JWT_SECRET, ...) live in a separate
+# Secret (see secret.example.yaml) and must never be placed here.
+# =====================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qconnect-ai-config
+data:
+  # --- service ---
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  API_PREFIX: "/api/v1"
+  REQUIRE_AUTH: "true"
+  JWT_ALGORITHM: "HS256"
+  JWT_TTL_SECONDS: "86400"
+
+  # --- downstream service URLs (in-cluster DNS: <service>.<namespace>) ---
+  # NOTE: all downstream URLs are BASE urls; the qc-evaluation service appends
+  # the path itself (it calls "{ML_INFERENCE_URL}/predict").
+  ML_INFERENCE_URL: "http://ml-inference:8001"
+  FEDERATED_LEARNING_URL: "http://federated-learning:8002"
+  RCA_CAPA_URL: "http://rca-capa:8003"
+  ANALYTICS_URL: "http://analytics:8004"
+  ML_INFERENCE_TIMEOUT_SECONDS: "2.0"

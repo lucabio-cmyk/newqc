@@ -1,0 +1,4 @@
+# Runtime data directory for the edge node.
+# The SQLite cache (qc_cache.db), cached model blobs and lab_config.json live
+# here at runtime. The contents are git-ignored; this file keeps the directory
+# present in the repository so the volume mount target always exists.

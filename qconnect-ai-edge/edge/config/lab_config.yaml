@@ -1,0 +1,79 @@
+# =============================================================================
+# QConnect-AI Edge - Laboratory configuration
+# -----------------------------------------------------------------------------
+# Per-lab settings for the edge node. Values here describe the lab, its
+# analyzers, the analytes under QC and which Westgard rules are active.
+# Environment variables (see .env) override the most operationally sensitive
+# values (LAB_ID, tokens, ports) at runtime.
+# =============================================================================
+
+# Unique identifier for this laboratory (must match the cloud tenant id).
+lab_id: lab-genova-001
+# Human-readable name shown on the local dashboard.
+lab_name: "Ospedale San Martino - Sierologia"
+
+# ----------------------------------------------------------------------------
+# Analyzers connected to this edge node.
+# Each analyzer pushes results over HL7/MLLP (or is polled via its own driver).
+# ----------------------------------------------------------------------------
+analyzers:
+  - id: ABBOTT-ARCHITECT-001
+    host: 10.20.0.11          # analyzer IP on the lab LAN
+    port: 2575                # MLLP port the analyzer connects to / from
+    vendor: Abbott
+    model: ARCHITECT i2000SR
+  - id: ROCHE-COBAS-002
+    host: 10.20.0.12
+    port: 2575
+    vendor: Roche
+    model: cobas e 801
+
+# ----------------------------------------------------------------------------
+# Analytes under QC on this node.
+# analyte_type must be one of: serology | chemistry | hematology | coagulation | nat
+# ----------------------------------------------------------------------------
+analytes:
+  - code: HCV-AB
+    name: "Anti-HCV"
+    analyte_type: serology
+    loinc: "13955-0"
+    levels: [NORMAL, HIGH]
+  - code: HBSAG
+    name: "HBsAg"
+    analyte_type: serology
+    loinc: "5196-1"
+    levels: [NORMAL]
+  - code: TROPONIN-I
+    name: "Troponin I"
+    analyte_type: chemistry
+    loinc: "10839-9"
+    levels: [LOW, NORMAL, HIGH]
+
+# ----------------------------------------------------------------------------
+# Westgard multirules enabled on this node.
+# Disable rules that generate excessive false rejections for high-sigma methods.
+# ----------------------------------------------------------------------------
+enabled_rules:
+  - "1-2S"   # warning only (gates rejection rules)
+  - "1-3S"   # reject - random error
+  - "2-2S"   # reject - systematic error
+  - "R-4S"   # reject - random error
+  - "4-1S"   # reject - systematic error
+  - "10x"    # reject - systematic error
+  - "7T"     # review - systematic drift
+
+# ----------------------------------------------------------------------------
+# HL7 ingestion.
+# ----------------------------------------------------------------------------
+hl7:
+  enabled: false             # set true (or ENABLE_HL7=true) to start the listener
+  listen_port: 2575
+  archive_raw: true          # persist raw messages to the cache for audit/replay
+
+# ----------------------------------------------------------------------------
+# Cloud synchronisation cadence (seconds). Mirrors SYNC_INTERVAL env var.
+# ----------------------------------------------------------------------------
+sync_interval: 300
+
+# Local cache database (mirrors DB_PATH env var).
+db_path: /data/qc_cache.db

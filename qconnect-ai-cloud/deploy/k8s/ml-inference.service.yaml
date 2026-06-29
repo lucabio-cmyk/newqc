@@ -1,0 +1,23 @@
+# =====================================================================
+# QConnect-AI Cloud :: ml-inference Service
+# ---------------------------------------------------------------------
+# ClusterIP for ml-inference. Exposed on port 8001 to match the
+# ML_INFERENCE_URL the qc-evaluation service is configured with
+# (http://ml-inference:8001/predict).
+# =====================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: ml-inference
+  labels:
+    app.kubernetes.io/name: ml-inference
+    app.kubernetes.io/component: inference
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ml-inference
+  ports:
+    - name: http
+      port: 8001
+      targetPort: http
+      protocol: TCP

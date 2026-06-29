@@ -1,0 +1,102 @@
+# =============================================================================
+# QConnect-AI Edge - per-lab service stack
+# -----------------------------------------------------------------------------
+# Runs the three edge services on a single lab node:
+#   * qc-inference : FastAPI offline QC evaluation + built-in dashboard (8000)
+#   * data-sync    : background daemon that syncs the local cache to the cloud
+#   * web-ui       : Flask operator dashboard (8001)
+#
+# Build contexts point at the edge repo root (".") so the shared `edge` package
+# is available to every service, while each service uses its own Dockerfile under
+# edge/<svc>/Dockerfile. Copy .env.example -> .env before `docker compose up`.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Primary inference service: evaluates QC results locally, serves dashboard.
+  # ---------------------------------------------------------------------------
+  qc-inference:
+    build:
+      context: .
+      dockerfile: edge/qc_inference/Dockerfile
+    image: qconnect-edge-qc-inference
+    env_file: .env
+    environment:
+      LAB_ID: ${LAB_ID}
+      CLOUD_URL: ${CLOUD_URL}
+      LAB_AUTH_TOKEN: ${LAB_AUTH_TOKEN}
+      DB_PATH: /data/qc_cache.db
+      ENABLE_HL7: ${ENABLE_HL7:-false}
+      HL7_LISTEN_PORT: ${HL7_LISTEN_PORT:-2575}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"   # HTTP API + built-in dashboard
+      - "2575:2575"   # HL7/MLLP listener (active when ENABLE_HL7=true)
+    volumes:
+      - edge_data:/data
+    restart: unless-stopped
+    networks:
+      - edge-network
+    healthcheck:
+      # Lightweight in-container probe; the edge stays "healthy" even offline.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Cloud sync daemon: uploads pending results, pulls models + control limits.
+  # No published ports (egress only). Starts after inference so the DB exists.
+  # ---------------------------------------------------------------------------
+  data-sync:
+    build:
+      context: .
+      dockerfile: edge/data_sync/Dockerfile
+    image: qconnect-edge-data-sync
+    env_file: .env
+    environment:
+      LAB_ID: ${LAB_ID}
+      CLOUD_URL: ${CLOUD_URL}
+      LAB_AUTH_TOKEN: ${LAB_AUTH_TOKEN}
+      DB_PATH: /data/qc_cache.db
+      SYNC_INTERVAL: ${SYNC_INTERVAL:-300}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - edge_data:/data   # shares the cache DB with qc-inference
+    depends_on:
+      - qc-inference
+    restart: unless-stopped
+    networks:
+      - edge-network
+
+  # ---------------------------------------------------------------------------
+  # Operator dashboard (Flask). Reads the shared cache; renders LJ charts.
+  # ---------------------------------------------------------------------------
+  web-ui:
+    build:
+      context: .
+      dockerfile: edge/web_ui/Dockerfile
+    image: qconnect-edge-web-ui
+    env_file: .env
+    environment:
+      LAB_ID: ${LAB_ID}
+      LAB_NAME: ${LAB_NAME:-Laboratory}
+      DB_PATH: /data/qc_cache.db
+    ports:
+      - "8001:8001"   # operator dashboard
+    volumes:
+      - edge_data:/data   # read the same cache the inference service writes
+    depends_on:
+      - qc-inference
+    restart: unless-stopped
+    networks:
+      - edge-network
+
+# Named volume holding the SQLite cache + cached model blobs, shared by services.
+volumes:
+  edge_data:
+
+networks:
+  edge-network:
+    driver: bridge

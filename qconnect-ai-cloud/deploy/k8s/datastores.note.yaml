@@ -1,0 +1,43 @@
+# =====================================================================
+# QConnect-AI Cloud :: Datastores (NOTE ONLY -- not applied)
+# ---------------------------------------------------------------------
+# This file is intentionally comment-only. It is EXCLUDED from
+# kustomization.yaml and contains NO Kubernetes objects.
+#
+# Postgres, TimescaleDB, Redis, Neo4j and RabbitMQ are STATEFUL systems.
+# Do NOT run them as hand-rolled StatefulSets in production. Use a
+# managed service or a maintained operator/chart instead:
+#
+#   Postgres / TimescaleDB
+#     - Managed: AWS RDS / Aurora, GCP Cloud SQL, Azure DB for Postgres.
+#     - Operator: CloudNativePG (https://cloudnative-pg.io) gives HA,
+#       backups (Barman), PITR and rolling minor upgrades.
+#     - TimescaleDB: Timescale Cloud, or the timescaledb image under
+#       CloudNativePG with the extension enabled.
+#
+#   Redis
+#     - Managed: AWS ElastiCache, GCP Memorystore, Azure Cache.
+#     - Chart/operator: Bitnami Redis Helm chart, or Redis Enterprise /
+#       Spotahome redis-operator for self-managed HA.
+#
+#   Neo4j
+#     - Neo4j Aura (managed), or the official Neo4j Helm charts.
+#
+#   RabbitMQ
+#     - Managed: AWS MQ, CloudAMQP.
+#     - Operator: RabbitMQ Cluster Operator (rabbitmq.com).
+#
+# ---------------------------------------------------------------------
+# WIRING: once provisioned, place the real connection strings into the
+# externally-managed Secret `qconnect-ai-secrets` (see secret.example.yaml),
+# NOT into the ConfigMap. Example values the app expects:
+#
+#   DATABASE_URL  = postgresql+asyncpg://qconnect:<pw>@<pg-host>:5432/qconnect
+#   TIMESCALE_URL = postgresql+asyncpg://qconnect:<pw>@<ts-host>:5432/qconnect_ts
+#   REDIS_URL     = redis://:<pw>@<redis-host>:6379/0
+#   NEO4J_URI     = bolt://<neo4j-host>:7687   (NEO4J_USER / NEO4J_PASSWORD)
+#   RABBITMQ_URL  = amqp://<user>:<pw>@<rabbitmq-host>:5672//
+#
+# For managed services, point the hostnames at the provider endpoints;
+# for in-cluster operators, point them at the operator-created Services.
+# =====================================================================

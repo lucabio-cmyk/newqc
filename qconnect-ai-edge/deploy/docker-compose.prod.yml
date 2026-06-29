@@ -1,0 +1,99 @@
+# =============================================================================
+# QConnect-AI Edge :: production override
+# -----------------------------------------------------------------------------
+# Hardens the base stack for an unattended lab node. Use TOGETHER with the
+# base compose file so build contexts and service definitions are inherited:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+#
+# Adds: pinned restart policy, memory limits, json-file log rotation,
+# read-only root filesystems (with tmpfs scratch), explicit healthchecks,
+# and a named volume for the SQLite data dir. Reads secrets from .env.
+#
+# NOTE: paths in this override are resolved relative to the directory of the
+# FIRST -f file (the repo root), so `env_file: .env` points at the repo root.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Inference API + built-in dashboard. Network-facing, so locked down hardest.
+  # ---------------------------------------------------------------------------
+  qc-inference:
+    restart: always
+    env_file: .env
+    mem_limit: 1g
+    memswap_limit: 1g
+    cpus: 1.5
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - edge_data:/data          # writable data dir survives read_only root
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # Cloud sync daemon. Egress only; no published ports.
+  # ---------------------------------------------------------------------------
+  data-sync:
+    restart: always
+    env_file: .env
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.75
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - edge_data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    security_opt:
+      - no-new-privileges:true
+
+  # ---------------------------------------------------------------------------
+  # Operator dashboard (Flask). Reads the shared cache read-only.
+  # ---------------------------------------------------------------------------
+  web-ui:
+    restart: always
+    env_file: .env
+    mem_limit: 512m
+    memswap_limit: 512m
+    cpus: 0.5
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - edge_data:/data
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8001/', timeout=3).status<500 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+
+# Named volume for the SQLite cache + cached model blobs (shared by services).
+# Declared here so this override is usable even if read standalone by tooling.
+volumes:
+  edge_data:

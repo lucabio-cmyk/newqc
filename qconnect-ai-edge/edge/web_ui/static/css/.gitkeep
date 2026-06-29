@@ -1,0 +1,3 @@
+# Styles are kept inline in the templates so the dashboard works fully offline
+# (no external CSS/CDN fetches). This directory is reserved for future extraction
+# of shared stylesheets if the UI grows.

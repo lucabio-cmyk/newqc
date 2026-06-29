@@ -1,0 +1,72 @@
+# =============================================================================
+# QConnect-AI :: Monitoring stack (Prometheus + Grafana + node-exporter)
+# -----------------------------------------------------------------------------
+# Run:  docker compose -f monitoring/docker-compose.monitoring.yml up -d
+#
+# Scraping the cloud/edge services requires Prometheus to share a Docker network
+# with them. The qconnect-cloud / qconnect-edge compose stacks each create a
+# network; declare it as an EXTERNAL network here and attach prometheus to it so
+# the "qc-evaluation:8000" / "qc-inference:8000" DNS names resolve. Example:
+#
+#   networks:
+#     qconnect-cloud-net:
+#       external: true
+#   services:
+#     prometheus:
+#       networks: [qconnect-monitoring, qconnect-cloud-net]
+#
+# Keep the dedicated "qconnect-monitoring" network for prometheus<->grafana.
+# =============================================================================
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: qconnect-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    networks:
+      - qconnect-monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: qconnect-grafana
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    networks:
+      - qconnect-monitoring
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: qconnect-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    networks:
+      - qconnect-monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  qconnect-monitoring:
+    name: qconnect-monitoring

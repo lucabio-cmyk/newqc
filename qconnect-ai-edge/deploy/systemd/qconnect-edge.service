@@ -1,0 +1,37 @@
+# =============================================================================
+# QConnect-AI Edge :: systemd unit
+# -----------------------------------------------------------------------------
+# Runs the per-lab edge stack via docker compose as a managed service.
+# Installed to /etc/systemd/system/qconnect-edge.service by install.sh.
+#
+#   systemctl enable --now qconnect-edge.service
+#   systemctl status qconnect-edge.service
+#   journalctl -u qconnect-edge.service -f
+#
+# WorkingDirectory must contain docker-compose.yml and deploy/ and .env.
+# =============================================================================
+[Unit]
+Description=QConnect-AI Edge stack (qc-inference, data-sync, web-ui)
+Documentation=https://qconnect-ai.example/docs/edge
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/qconnect-ai-edge
+EnvironmentFile=-/opt/qconnect-ai-edge/.env
+
+# Pull-and-up on start; clean down on stop. --remove-orphans keeps the
+# node tidy across compose changes.
+ExecStartPre=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml pull --ignore-pull-failures
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml up -d --remove-orphans
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.prod.yml down
+
+TimeoutStartSec=0
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,50 @@
+# =============================================================================
+# QConnect-AI Edge - Cloud connection configuration
+# -----------------------------------------------------------------------------
+# How the data-sync daemon reaches the central cloud. Secrets are referenced via
+# environment variables (never hard-coded here) so this file is safe to commit.
+# =============================================================================
+
+cloud:
+  # Base URL of the cloud API. Overridden by the CLOUD_URL env var.
+  url: https://cloud.qconnect-ai.example.com
+  # API path prefix used when building endpoints (labs/{lab_id}/qc/batch, etc.).
+  api_prefix: /api/v1
+
+# ----------------------------------------------------------------------------
+# Authentication.
+# The per-lab JWT is supplied via the LAB_AUTH_TOKEN env var and sent as
+# "Authorization: Bearer <token>". It is NOT stored in this file.
+# ----------------------------------------------------------------------------
+auth:
+  scheme: bearer
+  token_env: LAB_AUTH_TOKEN   # name of the env var holding the JWT
+
+# ----------------------------------------------------------------------------
+# TLS / mTLS.
+# verify=true uses the system trust store. For mTLS, point ca_bundle at a CA
+# file (also settable via CLOUD_CA_BUNDLE) and provide client_cert/client_key.
+# NEVER disable verification in production.
+# ----------------------------------------------------------------------------
+tls:
+  verify: true
+  ca_bundle: null             # path to a custom CA bundle, or null for system
+  client_cert: null           # path to client cert (mTLS), or null
+  client_key: null            # path to client key (mTLS), or null
+
+# ----------------------------------------------------------------------------
+# Retry / backoff for resilient sync over flaky lab networks.
+# Schedule is exponential: ~1 min, then a few minutes, capped at 30 min.
+# ----------------------------------------------------------------------------
+retry:
+  max_attempts: 10
+  base_seconds: 60
+  max_wait_seconds: 1800      # 30 minutes
+  jitter: true
+
+# ----------------------------------------------------------------------------
+# Upload behaviour.
+# ----------------------------------------------------------------------------
+upload:
+  batch_size: 100             # max records per batch POST
+  request_timeout_seconds: 30

@@ -1,0 +1,85 @@
+# =============================================================================
+# QConnect-AI :: Prometheus alerting rules
+# =============================================================================
+
+groups:
+  - name: qconnect-qc
+    rules:
+      - alert: HighQCFailureRate
+        expr: |
+          sum(rate(qconnect_qc_evaluations_total{qc_status="FAIL"}[5m]))
+            /
+          clamp_min(sum(rate(qconnect_qc_evaluations_total[5m])), 1e-9)
+            > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High QC failure rate on qc-evaluation"
+          description: >
+            More than 20% of QC evaluations have returned FAIL over the last
+            5 minutes (sustained for 10m). Investigate analyzer/reagent/lot.
+
+      - alert: QCEvaluationLatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(qconnect_qc_evaluation_duration_seconds_bucket[5m])) by (le)
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "QC evaluation p95 latency above 1s"
+          description: >
+            The 95th percentile of QC evaluation duration has exceeded 1 second
+            for 10 minutes. Check DB/ML inference latency and cloud load.
+
+      - alert: MLInferenceDown
+        expr: qconnect_ml_inference_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "ML inference degraded"
+          description: >
+            The cloud service has been running in ML-degraded mode (last ML
+            inference call failed) for 5 minutes. Verdicts still produced from
+            legacy engines but AI enrichment is unavailable.
+
+  - name: qconnect-edge
+    rules:
+      - alert: EdgeBacklogGrowing
+        expr: qconnect_edge_pending_uploads > 500
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Edge upload backlog growing"
+          description: >
+            An edge node has more than 500 QC results pending upload for 15
+            minutes. Check cloud connectivity and the data-sync service.
+
+  - name: qconnect-availability
+    rules:
+      - alert: CloudServiceDown
+        expr: up{job="qconnect-cloud"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cloud qc-evaluation service is down"
+          description: >
+            Prometheus cannot scrape the cloud qc-evaluation service for 2
+            minutes. The orchestration core may be unavailable.
+
+      - alert: EdgeServiceDown
+        expr: up{job="qconnect-edge"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Edge qc-inference service is down"
+          description: >
+            Prometheus cannot scrape an edge qc-inference node for 2 minutes.
+            Local QC evaluation for that lab may be unavailable.

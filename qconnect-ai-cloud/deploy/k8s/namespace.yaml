@@ -1,0 +1,12 @@
+# =====================================================================
+# QConnect-AI Cloud :: Namespace
+# ---------------------------------------------------------------------
+# Single logical namespace for all cloud SaaS workloads. Referenced by
+# kustomization.yaml (namespace: qconnect-ai).
+# =====================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qconnect-ai
+  labels:
+    app.kubernetes.io/part-of: qconnect-ai

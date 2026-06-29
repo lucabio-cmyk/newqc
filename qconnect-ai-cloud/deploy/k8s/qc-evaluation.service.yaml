@@ -1,0 +1,22 @@
+# =====================================================================
+# QConnect-AI Cloud :: qc-evaluation Service
+# ---------------------------------------------------------------------
+# ClusterIP fronting the qc-evaluation pods. Exposes :80 in-cluster and
+# forwards to container port 8000. The Ingress targets this service.
+# =====================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: qc-evaluation
+  labels:
+    app.kubernetes.io/name: qc-evaluation
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: qc-evaluation
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

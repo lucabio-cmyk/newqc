@@ -1,0 +1,40 @@
+# =====================================================================
+# QConnect-AI Cloud :: Kustomization
+# ---------------------------------------------------------------------
+# Aggregates the real, appliable resources. The `*.example.yaml` and
+# `*.note.yaml` files are deliberately NOT listed here:
+#   - secret.example.yaml  : template only; create the real Secret OOB.
+#   - datastores.note.yaml : comments only; nothing to apply.
+#
+# Deploy:  kubectl apply -k deploy/k8s
+# Override image tag:  kustomize edit set image \
+#     registry.example.com/qconnect-ai/qc-evaluation=REG/qc-evaluation:TAG
+# =====================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: qconnect-ai
+
+commonLabels:
+  app.kubernetes.io/part-of: qconnect-ai
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - qc-evaluation.deployment.yaml
+  - qc-evaluation.service.yaml
+  - qc-evaluation.hpa.yaml
+  - ml-inference.deployment.yaml
+  - ml-inference.service.yaml
+  - ml-inference.hpa.yaml
+  - ingress.yaml
+
+# Override these from CI/CD (deploy.sh) so the same manifests ship any
+# build. `newName`/`newTag` are patched by `kustomize edit set image`.
+images:
+  - name: registry.example.com/qconnect-ai/qc-evaluation
+    newName: registry.example.com/qconnect-ai/qc-evaluation
+    newTag: latest
+  - name: registry.example.com/qconnect-ai/ml-inference
+    newName: registry.example.com/qconnect-ai/ml-inference
+    newTag: latest

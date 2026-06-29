@@ -1,0 +1,16 @@
+# Edge-local ignores (the monorepo root .gitignore covers the rest).
+
+# Runtime cache / model blobs
+data/*.db
+data/*.db-wal
+data/*.db-shm
+data/models/
+data/lab_config.json
+
+# Optional ML model artifacts
+*.tflite
+*.h5
+*.pkl
+
+# Secrets
+.env

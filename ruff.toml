@@ -1,0 +1,12 @@
+# Repo-wide ruff configuration for the QConnect-AI monorepo.
+line-length = 100
+target-version = "py311"
+
+[lint]
+# Pragmatic rule set for a scaffold: pyflakes (F) + pycodestyle errors (E).
+# Expand over time (e.g. "I" for import sorting, "B" for bugbear).
+select = ["E", "F"]
+
+[lint.per-file-ignores]
+# Re-export aggregators intentionally import-without-use.
+"**/__init__.py" = ["F401"]
