@@ -20,6 +20,9 @@ httpx>=0.27
 # --- Logging ---
 loguru>=0.7
 
+# --- Observability / metrics ---
+prometheus-client>=0.20
+
 # --- Local dashboard (web_ui) ---
 flask>=3.0
 

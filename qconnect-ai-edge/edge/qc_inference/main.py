@@ -22,8 +22,15 @@ from typing import Any, AsyncIterator
 
 import httpx
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from loguru import logger
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 from edge.qc_inference import __version__
 from edge.qc_inference.cache.model_cache import ModelCache
@@ -65,6 +72,29 @@ _anomaly = AnomalyDetector()
 _lstm = LSTMLite()
 _hl7_listener: MLLPListener | None = None
 _state: dict[str, Any] = {"last_sync": None, "models_loaded": {}}
+
+
+# --------------------------------------------------------------------------- #
+# Prometheus metrics (default REGISTRY)
+# --------------------------------------------------------------------------- #
+EDGE_EVALUATIONS_TOTAL = Counter(
+    "qconnect_edge_evaluations_total",
+    "Total QC evaluations performed by this edge node, by resulting status.",
+    ["qc_status"],
+)
+EDGE_PENDING_UPLOADS = Gauge(
+    "qconnect_edge_pending_uploads",
+    "Number of QC results cached locally awaiting upload to the cloud.",
+)
+EDGE_CLOUD_UP = Gauge(
+    "qconnect_edge_cloud_up",
+    "1 when the cloud was reachable at the last sync/probe, 0 otherwise.",
+)
+EDGE_EVAL_DURATION = Histogram(
+    "qconnect_edge_eval_duration_seconds",
+    "Duration of the edge evaluate endpoint in seconds.",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -212,7 +242,13 @@ async def evaluate(qc: QCDataInput) -> QCEvaluationResponse:
         except Exception as exc:  # noqa: BLE001 - cache failure must not 500 a good eval
             logger.error("[{}] failed to cache QC result: {}", corr, exc)
 
-    elapsed_ms = (time.perf_counter() - started) * 1000.0
+    elapsed = time.perf_counter() - started
+    elapsed_ms = elapsed * 1000.0
+
+    # --- Metrics. ----------------------------------------------------- #
+    EDGE_EVALUATIONS_TOTAL.labels(qc_status=status.value).inc()
+    EDGE_EVAL_DURATION.observe(elapsed)
+
     logger.info(
         "[{}] result={} severity={} confidence={:.2f} in {:.1f}ms",
         corr,
@@ -224,6 +260,21 @@ async def evaluate(qc: QCDataInput) -> QCEvaluationResponse:
     if elapsed_ms > 100:
         logger.warning("[{}] evaluation exceeded 100ms budget ({:.1f}ms)", corr, elapsed_ms)
     return response
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Expose Prometheus metrics in the text exposition format.
+
+    Refreshes the pending-uploads gauge from the local cache on every scrape.
+    A cache error is swallowed so a transient DB problem never breaks scraping.
+    """
+    try:
+        if _cache is not None:
+            EDGE_PENDING_UPLOADS.set(_cache.count_pending_uploads())
+    except Exception as exc:  # noqa: BLE001 - scrape must never fail on cache error
+        logger.warning("metrics: failed to read pending uploads: {}", exc)
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # --------------------------------------------------------------------------- #
@@ -394,13 +445,17 @@ def _fuse(
 async def _cloud_reachable() -> bool:
     """Best-effort cloud connectivity probe. Always returns a bool, never raises."""
     if not CLOUD_URL:
+        EDGE_CLOUD_UP.set(0)
         return False
     try:
         async with httpx.AsyncClient(timeout=CLOUD_PROBE_TIMEOUT) as client:
             resp = await client.get(f"{CLOUD_URL}/health")
-            return resp.status_code < 500
+            reachable = resp.status_code < 500
+            EDGE_CLOUD_UP.set(1 if reachable else 0)
+            return reachable
     except Exception as exc:  # noqa: BLE001 - offline is normal, not an error
         logger.debug("cloud probe failed (offline?): {}", exc)
+        EDGE_CLOUD_UP.set(0)
         return False
 
 

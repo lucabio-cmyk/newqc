@@ -30,12 +30,20 @@ The module supports two layouts:
 from __future__ import annotations
 
 import sys
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 from loguru import logger
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 
 # --------------------------------------------------------------------------- #
 # Import resilience: make sibling modules importable in either layout.
@@ -51,7 +59,7 @@ if str(_REPO_ROOT) not in sys.path:
 import httpx  # noqa: E402
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
-from fastapi.responses import JSONResponse  # noqa: E402
+from fastapi.responses import JSONResponse, Response  # noqa: E402
 
 try:  # Container-style imports (service dir on path).
     import schemas  # type: ignore
@@ -103,6 +111,35 @@ API_PREFIX = "/api/v1"
 def _utcnow() -> datetime:
     """Timezone-aware UTC now."""
     return datetime.now(timezone.utc)
+
+
+# --------------------------------------------------------------------------- #
+# Prometheus metrics (default REGISTRY)
+# --------------------------------------------------------------------------- #
+QC_EVALUATIONS_TOTAL = Counter(
+    "qconnect_qc_evaluations_total",
+    "Total QC evaluations performed, by analyte type and resulting status.",
+    ["analyte_type", "qc_status"],
+)
+QC_SEVERITY_TOTAL = Counter(
+    "qconnect_qc_severity_total",
+    "Total QC evaluations by resulting severity.",
+    ["severity"],
+)
+QC_EVALUATION_DURATION = Histogram(
+    "qconnect_qc_evaluation_duration_seconds",
+    "Duration of the QC evaluate endpoint in seconds.",
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
+)
+ML_INFERENCE_UP = Gauge(
+    "qconnect_ml_inference_up",
+    "1 when the last ML inference call succeeded, 0 when degraded.",
+)
+HTTP_REQUESTS_TOTAL = Counter(
+    "qconnect_http_requests_total",
+    "Total HTTP requests served, by method, path and status code.",
+    ["method", "path", "status"],
+)
 
 
 # Singleton engine instances (stateless, cheap to reuse).
@@ -175,6 +212,29 @@ app = FastAPI(
 )
 app.add_middleware(AuditLoggingMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
+
+
+@app.middleware("http")
+async def _metrics_middleware(request: Request, call_next: Any) -> Response:
+    """Time every request and count it by method, route template and status.
+
+    Uses the matched route path template (not the raw URL) to keep label
+    cardinality bounded. Never swallows the downstream response.
+    """
+    started = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - started
+    route = request.scope.get("route")
+    path = getattr(route, "path", None) or request.url.path
+    if path != "/metrics":
+        HTTP_REQUESTS_TOTAL.labels(
+            method=request.method,
+            path=path,
+            status=str(response.status_code),
+        ).inc()
+        if path == f"{API_PREFIX}/qc/evaluate":
+            QC_EVALUATION_DURATION.observe(elapsed)
+    return response
 
 
 # --------------------------------------------------------------------------- #
@@ -451,6 +511,7 @@ async def evaluate_qc(
         ) from exc
 
     ml_payload = await _call_ml_inference(qc, corr_id)
+    ML_INFERENCE_UP.set(1 if ml_payload is not None else 0)
 
     qc_status, severity, ai, recommendation, confidence = _fuse(
         engines["westgard"],
@@ -479,6 +540,15 @@ async def evaluate_qc(
     )
 
     await _persist_result(db, qc, response)
+
+    # --- Metrics: count evaluations + severity. The request-duration histogram
+    # is observed by the HTTP middleware for the evaluate route. ------------- #
+    QC_EVALUATIONS_TOTAL.labels(
+        analyte_type=qc.analyte_type.value,
+        qc_status=response.qc_status.value,
+    ).inc()
+    QC_SEVERITY_TOTAL.labels(severity=response.severity.value).inc()
+
     logger.info(
         "Evaluated {} {} -> {} ({})",
         qc.analyte_code,
@@ -487,6 +557,12 @@ async def evaluate_qc(
         severity,
     )
     return response
+
+
+@app.get("/metrics", include_in_schema=False)
+async def metrics() -> Response:
+    """Expose Prometheus metrics in the text exposition format."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.get(
