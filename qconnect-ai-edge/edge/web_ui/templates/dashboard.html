@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>QConnect-AI Edge Dashboard - {{ lab_name }}</title>
+<style>
+  /* Dark-mode, mobile-responsive, fully inline (no external CDNs). */
+  :root {
+    color-scheme: dark;
+    --bg:#0f1216; --panel:#161b22; --border:#283142; --muted:#8b97a8;
+    --text:#e6e9ef; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding:16px 20px; background:var(--panel); border-bottom:1px solid var(--border);
+           display:flex; flex-wrap:wrap; gap:8px; align-items:baseline; justify-content:space-between; }
+  header h1 { margin:0; font-size:18px; }
+  header .sub { color:var(--muted); font-size:13px; }
+  #connDot { display:inline-block; width:10px; height:10px; border-radius:50%;
+             background:var(--warn); margin-right:6px; vertical-align:middle; }
+  main { padding:20px; max-width:1100px; margin:0 auto; }
+  .row { display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(200px,1fr));
+         margin-bottom:16px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:16px; }
+  .card h2 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--muted); }
+  .metric { font-size:28px; font-weight:600; }
+  .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { padding:8px; text-align:left; border-bottom:1px solid var(--border); }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; }
+  tr.clickable:hover { background:#1c2230; cursor:pointer; }
+  select { background:var(--bg); color:var(--text); border:1px solid var(--border);
+           border-radius:6px; padding:6px 8px; }
+  canvas { width:100%; height:320px; background:#0c0f13; border-radius:8px; }
+  .legend { font-size:12px; color:var(--muted); margin-top:8px; }
+  .legend span { margin-right:14px; }
+  footer { text-align:center; color:#5b6675; font-size:12px; padding:16px; }
+  @media (max-width:600px){ .metric{font-size:22px} header h1{font-size:16px} }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>QConnect-AI Edge Dashboard</h1>
+    <div class="sub">{{ lab_name }} (<span id="labId">{{ lab_id }}</span>)</div>
+  </div>
+  <div class="sub"><span id="connDot"></span><span id="connText">checking...</span></div>
+</header>
+
+<main>
+  <div class="row">
+    <div class="card"><h2>Pending uploads</h2><div class="metric" id="pending">--</div></div>
+    <div class="card"><h2>Last sync</h2><div class="metric" id="lastSync" style="font-size:16px;">--</div></div>
+    <div class="card"><h2>LSTM model</h2><div class="metric" id="lstm" style="font-size:18px;">--</div></div>
+    <div class="card"><h2>Model version</h2><div class="metric" id="version" style="font-size:18px;">--</div></div>
+  </div>
+
+  <div class="row" style="grid-template-columns:1fr;">
+    <div class="card">
+      <h2>QC summary - last 24h</h2>
+      <table>
+        <thead><tr><th>Analyte</th><th>Pass</th><th>Fail</th></tr></thead>
+        <tbody id="qcBody"><tr><td colspan="3">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="row" style="grid-template-columns:1fr;">
+    <div class="card">
+      <h2>Levey-Jennings chart</h2>
+      <div style="margin-bottom:10px;">
+        Analyte:
+        <select id="analyteSelect" onchange="loadChart()"><option value="">--</option></select>
+      </div>
+      <canvas id="ljChart" width="1000" height="320"></canvas>
+      <div class="legend">
+        <span style="color:var(--ok)">— mean</span>
+        <span style="color:var(--warn)">— ±1/2 SD</span>
+        <span style="color:var(--bad)">— ±3 SD</span>
+        <span style="color:var(--accent)">● data point</span>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>Auto-refreshes every 10s · served entirely from the local edge cache · no external CDNs.</footer>
+
+<script>
+// ---- Status polling ------------------------------------------------------- //
+let analytes = [];
+
+async function refreshStatus() {
+  try {
+    const d = await (await fetch('/api/status')).json();
+    document.getElementById('pending').textContent = d.pending_uploads ?? '--';
+    document.getElementById('lastSync').textContent = d.last_sync || 'never';
+    const m = d.models_loaded || {};
+    document.getElementById('lstm').textContent = m.lstm ? 'loaded' : 'heuristic';
+    document.getElementById('version').textContent = m.version || 'n/a';
+
+    const dot = document.getElementById('connDot');
+    const txt = document.getElementById('connText');
+    if (d.cloud_connected) { dot.style.background = 'var(--ok)'; txt.textContent = 'cloud online'; }
+    else { dot.style.background = 'var(--warn)'; txt.textContent = 'cloud offline (cached)'; }
+
+    const rows = d.qc_24h || [];
+    const body = document.getElementById('qcBody');
+    body.innerHTML = rows.length ? rows.map(function(x){
+      return '<tr class="clickable" onclick="selectAnalyte(\'' + x.analyte + '\')">' +
+        '<td>' + x.analyte + '</td>' +
+        '<td class="ok">' + (x.pass||0) + '</td>' +
+        '<td class="bad">' + (x.fail||0) + '</td></tr>';
+    }).join('') : '<tr><td colspan="3">No QC results in the last 24h.</td></tr>';
+
+    // Populate the analyte selector.
+    const newAnalytes = rows.map(function(x){ return x.analyte; }).filter(Boolean);
+    if (JSON.stringify(newAnalytes) !== JSON.stringify(analytes)) {
+      analytes = newAnalytes;
+      const sel = document.getElementById('analyteSelect');
+      const current = sel.value;
+      sel.innerHTML = '<option value="">--</option>' +
+        analytes.map(function(a){ return '<option value="'+a+'">'+a+'</option>'; }).join('');
+      if (current) sel.value = current;
+    }
+  } catch (e) {
+    document.getElementById('connText').textContent = 'error';
+  }
+}
+
+function selectAnalyte(code) {
+  document.getElementById('analyteSelect').value = code;
+  loadChart();
+}
+
+// ---- Levey-Jennings chart (vanilla canvas, no chart lib) ------------------ //
+async function loadChart() {
+  const code = document.getElementById('analyteSelect').value;
+  if (!code) { clearChart(); return; }
+  try {
+    const d = await (await fetch('/api/qc-history/' + encodeURIComponent(code))).json();
+    drawLJ(d);
+  } catch (e) { clearChart(); }
+}
+
+function clearChart() {
+  const c = document.getElementById('ljChart');
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+}
+
+function drawLJ(d) {
+  const c = document.getElementById('ljChart');
+  const ctx = c.getContext('2d');
+  const W = c.width, H = c.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const pad = {l:50, r:20, t:16, b:24};
+  const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+  const pts = (d.points || []).map(function(p){ return p.value; });
+  const L = d.lines || {};
+
+  // Y-range from ±3SD band (fallback to data range).
+  let lo = L.minus_3sd, hi = L.plus_3sd;
+  if (!(hi > lo)) {
+    lo = Math.min.apply(null, pts.concat([0])); hi = Math.max.apply(null, pts.concat([1]));
+    if (hi === lo) { hi = lo + 1; }
+  }
+  const yToPx = function(v){ return pad.t + plotH - ((v - lo) / (hi - lo)) * plotH; };
+  const xToPx = function(i){ const n = Math.max(1, pts.length - 1); return pad.l + (i / n) * plotW; };
+
+  // SD band lines.
+  const bands = [
+    ['minus_3sd','#f85149'], ['plus_3sd','#f85149'],
+    ['minus_2sd','#d29922'], ['plus_2sd','#d29922'],
+    ['minus_1sd','#d29922'], ['plus_1sd','#d29922'],
+    ['mean','#3fb950']
+  ];
+  ctx.font = '11px system-ui';
+  bands.forEach(function(b){
+    const v = L[b[0]]; if (v === undefined) return;
+    const y = yToPx(v);
+    ctx.strokeStyle = b[1]; ctx.globalAlpha = b[0] === 'mean' ? 1 : 0.6;
+    ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    ctx.globalAlpha = 1; ctx.fillStyle = b[1];
+    ctx.fillText(v.toFixed(2), 4, y + 3);
+  });
+
+  // Data series.
+  ctx.strokeStyle = '#58a6ff'; ctx.fillStyle = '#58a6ff'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  pts.forEach(function(v, i){
+    const x = xToPx(i), y = yToPx(v);
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  pts.forEach(function(v, i){
+    const x = xToPx(i), y = yToPx(v);
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+  });
+
+  if (!pts.length) {
+    ctx.fillStyle = '#8b97a8';
+    ctx.fillText('No history for this analyte.', pad.l + 10, pad.t + 20);
+  }
+}
+
+refreshStatus();
+setInterval(refreshStatus, 10000);
+</script>
+</body>
+</html>
