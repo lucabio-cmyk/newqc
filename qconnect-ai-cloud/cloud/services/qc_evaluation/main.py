@@ -63,7 +63,12 @@ from fastapi.responses import JSONResponse, Response  # noqa: E402
 
 try:  # Container-style imports (service dir on path).
     import schemas  # type: ignore
-    from dependencies import get_app_settings, get_current_principal, get_db  # type: ignore
+    from dependencies import (  # type: ignore
+        get_app_settings,
+        get_current_principal,
+        get_db,
+        require_role,
+    )
     from models import (  # type: ignore
         DistributionDetector,
         QConnectEngine,
@@ -76,6 +81,7 @@ except Exception:  # pragma: no cover - monorepo/test layout
         get_app_settings,
         get_current_principal,
         get_db,
+        require_role,
     )
     from cloud.services.qc_evaluation.models import (  # type: ignore
         DistributionDetector,
@@ -540,7 +546,7 @@ async def evaluate_qc(
     qc: "schemas.QCDataInput",
     request: Request,
     db: Any = Depends(get_db),
-    principal: dict | None = Depends(get_current_principal),
+    principal: dict | None = Depends(require_role("operator")),
 ) -> "schemas.QCEvaluationResponse":
     """Evaluate one QC result and return the fused verdict.
 
@@ -647,7 +653,7 @@ async def metrics() -> Response:
 async def lab_qc_status(
     lab_id: str,
     db: Any = Depends(get_db),
-    principal: dict | None = Depends(get_current_principal),
+    principal: dict | None = Depends(require_role("viewer")),
 ) -> "schemas.LabQCStatusSummary":
     """Return a rolling-window status summary for a lab.
 
@@ -676,7 +682,7 @@ async def ingest_batch(
     batch: "schemas.QCBatchUpload",
     request: Request,
     db: Any = Depends(get_db),
-    principal: dict | None = Depends(get_current_principal),
+    principal: dict | None = Depends(require_role("operator")),
 ) -> "schemas.QCBatchAccepted":
     """Ingest a batch of QC results (the edge sync target).
 

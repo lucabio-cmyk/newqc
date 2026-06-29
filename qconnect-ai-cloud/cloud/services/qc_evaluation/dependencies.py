@@ -62,6 +62,35 @@ except Exception:  # pragma: no cover - allow standalone import in container
             raise AuthError("JWT support unavailable")
 
 
+# RBAC helper (guarded so the module still compiles without the security pkg).
+try:
+    from cloud.config.security import has_role
+except Exception:  # pragma: no cover - fallback layouts
+    try:
+        from security import has_role  # type: ignore
+    except Exception:
+
+        def has_role(user_role: Any, required_role: str) -> bool:  # type: ignore
+            """Permissive fallback when the security module is unavailable."""
+            return True
+
+
+# A header-reading sub-dependency. Defined conditionally so importing this
+# module never requires FastAPI (Header(...) cannot be evaluated otherwise).
+if _HAS_FASTAPI:
+
+    def _auth_header(
+        authorization: str | None = Header(default=None, alias="Authorization"),
+    ) -> str | None:
+        """Extract the raw ``Authorization`` header value (or None)."""
+        return authorization
+
+else:  # pragma: no cover - minimal env without FastAPI
+
+    def _auth_header() -> str | None:
+        return None
+
+
 async def get_db() -> AsyncIterator[Any]:
     """Yield an async DB session, or ``None`` when no DB is configured.
 
@@ -153,3 +182,65 @@ def _unauthorized(detail: str) -> None:
             headers={"WWW-Authenticate": "Bearer"},
         )
     raise AuthError(detail)
+
+
+def _forbidden(detail: str) -> None:
+    """Raise an HTTP 403 (or a plain error if FastAPI is absent)."""
+    if _HAS_FASTAPI and status is not None:
+        raise HTTPException(  # type: ignore[misc]
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail,
+        )
+    raise AuthError(detail)
+
+
+# --------------------------------------------------------------------------- #
+# RBAC dependencies (FastAPI-facing; defined only when FastAPI is available so
+# the module still compiles in a minimal environment).
+# --------------------------------------------------------------------------- #
+if _HAS_FASTAPI:
+
+    async def get_principal(
+        authorization: str | None = Depends(_auth_header),
+    ) -> dict[str, Any] | None:
+        """FastAPI dependency: decode the bearer token from the request header.
+
+        Unlike :func:`get_current_principal` (which takes the raw value and is
+        unit-testable in isolation), this reads the ``Authorization`` header via
+        a sub-dependency so the token is actually extracted from the request.
+        """
+        return await get_current_principal(authorization)
+
+    def require_role(required_role: str):
+        """Return a dependency enforcing ``required_role`` (hierarchical RBAC).
+
+        Behaviour:
+            * ``require_auth`` False (dev/test default) -> bypass; the principal
+              (possibly ``None``) is returned without an RBAC check.
+            * ``require_auth`` True -> a valid token is mandatory (401 if absent)
+              and its role must meet/exceed ``required_role`` (403 otherwise).
+        """
+
+        async def _dependency(
+            principal: dict[str, Any] | None = Depends(get_principal),
+        ) -> dict[str, Any] | None:
+            settings = get_settings()
+            if not bool(getattr(settings, "require_auth", False)):
+                return principal  # dev/test bypass
+            if principal is None:
+                _unauthorized("Authentication required")
+            if not has_role(principal.get("role"), required_role):
+                _forbidden(f"Requires role '{required_role}'")
+            return principal
+
+        return _dependency
+
+else:  # pragma: no cover - minimal env without FastAPI
+
+    def require_role(required_role: str):
+        """No-op RBAC factory when FastAPI is unavailable."""
+
+        async def _dependency() -> None:
+            return None
+
+        return _dependency
