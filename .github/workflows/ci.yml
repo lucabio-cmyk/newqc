@@ -60,6 +60,18 @@ jobs:
         # name does not collide with the per-project `tests` packages).
         run: pytest integration_tests -q
 
+      - name: Test microservices
+        # Each service is a separate invocation: their main.py modules use
+        # top-level imports (schemas/models/main) that would collide in a
+        # single pytest session.
+        run: |
+          pytest qconnect-ai-cloud/cloud/services/ml_inference/tests -q
+          pytest qconnect-ai-cloud/cloud/services/federated_learning/tests -q
+          pytest qconnect-ai-cloud/cloud/services/rca_capa/tests -q
+
+      - name: Test load harness
+        run: pytest tools/loadtest -q
+
   lint:
     name: lint (black + ruff)
     runs-on: ubuntu-latest
@@ -72,9 +84,9 @@ jobs:
       - name: Install linters
         run: pip install black ruff
       - name: black --check
-        run: black -l 100 --check qconnect-ai-shared qconnect-ai-edge qconnect-ai-cloud
+        run: black -l 100 --check qconnect-ai-shared qconnect-ai-edge qconnect-ai-cloud integration_tests tools
       - name: ruff check
-        run: ruff check qconnect-ai-shared qconnect-ai-edge qconnect-ai-cloud
+        run: ruff check qconnect-ai-shared qconnect-ai-edge qconnect-ai-cloud integration_tests tools
 
   db-schema:
     name: postgres schema applies
@@ -103,3 +115,25 @@ jobs:
           PGPASSWORD=test psql -h localhost -U test -d qconnect_test \
             -v ON_ERROR_STOP=0 \
             -f qconnect-ai-cloud/cloud/databases/postgres/init.sql
+
+  migrations:
+    name: alembic migrations (offline)
+    runs-on: ubuntu-latest
+    # Offline check: validates the revision chain and that every migration emits
+    # SQL. A live `alembic upgrade` is intentionally not run here because the
+    # baseline executes init.sql, which requires the timescaledb/vector
+    # extensions absent from the stock postgres image.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Alembic
+        run: pip install "alembic>=1.13" "sqlalchemy>=2" "psycopg[binary]>=3.1"
+      - name: Verify revision history
+        working-directory: qconnect-ai-cloud
+        run: alembic history --verbose
+      - name: Generate upgrade SQL (offline)
+        working-directory: qconnect-ai-cloud
+        run: alembic upgrade head --sql
