@@ -73,6 +73,20 @@ def test_westgard_1_2s_warning() -> None:
     assert res["rule_violated"] == "1-2S"
 
 
+def test_westgard_r_4s_requires_opposite_sides() -> None:
+    """R-4S needs opposite-side points each beyond 2 SD, not just |range|>=4."""
+    eng = WestgardEngine()
+    assert eng.check_r_4s([2.5, -2.5]) is True
+    assert eng.check_r_4s([-2.5, 2.5]) is True
+    # Same-side wide gap that the old range-only check wrongly flagged:
+    assert eng.check_r_4s([3.5, -0.6]) is False  # -0.6 is not beyond -2 SD
+    assert eng.check_r_4s([1.0, 1.5]) is False
+    # End-to-end: prior +2.5 SD then current -2.5 SD -> R-4S FAIL.
+    res = eng.evaluate(value=95.0, target=100.0, sd=2.0, history=[105.0])
+    assert res["status"] == "FAIL"
+    assert res["rule_violated"] == "R-4S"
+
+
 def test_westgard_stats() -> None:
     """calculate_stats returns sensible mean/sd/cv."""
     eng = WestgardEngine()

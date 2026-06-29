@@ -164,19 +164,19 @@ class MLLPListener:
         ok, reasons = validate_message(raw)
         if not ok:
             logger.warning("Rejecting invalid HL7 from {}: {}", peer, reasons)
-            self._send_ack(writer, None, code="AR")
+            await self._send_ack(writer, None, code="AR")
             return
 
         try:
             parsed = self._parser.parse_message(raw)
         except Exception as exc:  # noqa: BLE001
             logger.error("Failed to parse HL7 from {}: {}", peer, exc)
-            self._send_ack(writer, None, code="AE")
+            await self._send_ack(writer, None, code="AE")
             return
 
         ctrl_id = parsed.get("message_control_id")
         # ACK first so the analyzer is freed up quickly, then dispatch.
-        self._send_ack(writer, ctrl_id, code="AA")
+        await self._send_ack(writer, ctrl_id, code="AA")
 
         try:
             result = self._callback(parsed)
@@ -185,11 +185,17 @@ class MLLPListener:
         except Exception as exc:  # noqa: BLE001 - callback isolation
             logger.exception("HL7 callback error (ctrl_id={}): {}", ctrl_id, exc)
 
-    def _send_ack(self, writer: asyncio.StreamWriter, ctrl_id: str | None, code: str) -> None:
-        """Frame and write an ACK back to the analyzer."""
+    async def _send_ack(self, writer: asyncio.StreamWriter, ctrl_id: str | None, code: str) -> None:
+        """Frame, write and flush an ACK back to the analyzer.
+
+        ``drain()`` is awaited so the ACK is actually pushed to the socket before
+        we move on — without it the framed bytes can be lost if the connection is
+        closed immediately, or buffer unbounded under load.
+        """
         ack = self._parser.build_ack(ctrl_id, code=code)
         framed = bytes([VT]) + ack.encode("utf-8") + bytes([FS, CR])
         try:
             writer.write(framed)
+            await writer.drain()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to send ACK ({}): {}", code, exc)

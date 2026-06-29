@@ -54,6 +54,22 @@ def test_westgard_10x() -> None:
     assert res["rule_violated"] == "10x"
 
 
+def test_westgard_r_4s_opposite_sides() -> None:
+    eng = WestgardEngine()
+    # Prior point at +2.5 SD, current at -2.5 SD -> opposite sides -> R-4S FAIL.
+    res = eng.evaluate(95.0, target=100.0, sd=2.0, history=[105.0])
+    assert res["status"] == "FAIL"
+    assert res["rule_violated"] == "R-4S"
+
+
+def test_westgard_r_4s_same_side_does_not_fire() -> None:
+    eng = WestgardEngine()
+    # Prior +3.5 SD, current -0.6 SD: |range|>=4 but NOT opposite sides each
+    # beyond 2 SD -> the old range-only check wrongly flagged R-4S; now PASS.
+    res = eng.evaluate(98.8, target=100.0, sd=2.0, history=[107.0])
+    assert res["rule_violated"] != "R-4S"
+
+
 def test_westgard_calculate_stats() -> None:
     eng = WestgardEngine()
     stats = eng.calculate_stats([10.0, 12.0, 14.0])

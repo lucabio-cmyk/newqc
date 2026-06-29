@@ -132,14 +132,18 @@ class WestgardEngine:
         return (a > 2.0 and b > 2.0) or (a < -2.0 and b < -2.0)
 
     def check_r_4s(self, zs: Sequence[float]) -> bool:
-        """R-4S (reject): range between two consecutive values >= 4 SD.
+        """R-4S (reject): one value beyond +2SD and the other beyond -2SD.
 
         One above +2SD and the other below -2SD -> **random** error / imprecision.
+        The two opposite-side points span >=4SD by construction. A plain
+        ``|a-b| >= 4`` check is wrong: a same-side pair can only reach a 4SD
+        range if one point already breaches 1-3S, so range-only would mis-fire on
+        pairs like (+0.5, +4.5).
         """
         if len(zs) < 2:
             return False
         a, b = zs[-1], zs[-2]
-        return (a - b) >= 4.0 or (b - a) >= 4.0
+        return (a > 2.0 and b < -2.0) or (a < -2.0 and b > 2.0)
 
     def check_4_1s(self, zs: Sequence[float]) -> bool:
         """4-1S (reject): four consecutive values beyond the same +/-1 SD limit.

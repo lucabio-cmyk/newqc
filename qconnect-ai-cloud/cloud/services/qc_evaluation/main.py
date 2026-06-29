@@ -824,10 +824,9 @@ async def _check_redis() -> bool:
 
         settings = _safe_settings()
         url = getattr(settings, "redis_url", "redis://localhost:6379/0")
-        client = aioredis.from_url(url, socket_connect_timeout=0.5)
-        pong = await client.ping()
-        await client.aclose()
-        return bool(pong)
+        # async with guarantees the connection is closed even if ping() raises.
+        async with aioredis.from_url(url, socket_connect_timeout=0.5) as client:
+            return bool(await client.ping())
     except Exception:
         return False
 

@@ -87,9 +87,13 @@ class WestgardEngine:
         if abs(z_now) > self.REJECT_SD:
             rule_violated, status = "1-3S", "FAIL"
 
-        # --- R-4S: range between the two most recent points >= 4 SD. ------- #
-        # Detects random error even when neither point breaches 1-3S alone.
-        elif len(zs) >= 2 and abs(zs[-1] - zs[-2]) >= 4.0:
+        # --- R-4S: one point beyond +2SD and the other beyond -2SD. -------- #
+        # An opposite-side pair spans >=4SD -> random error / imprecision. A
+        # plain |range|>=4 check would mis-fire on same-side pairs like
+        # (+0.5, +4.5) where the high point already belongs to 1-3S.
+        elif len(zs) >= 2 and (
+            (zs[-1] > 2.0 and zs[-2] < -2.0) or (zs[-1] < -2.0 and zs[-2] > 2.0)
+        ):
             rule_violated, status = "R-4S", "FAIL"
 
         # --- 2-2S: two consecutive points beyond the SAME +/-2 SD limit. --- #
