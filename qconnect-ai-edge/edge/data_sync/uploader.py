@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 from loguru import logger
@@ -45,6 +45,7 @@ class CloudUploader:
         *,
         verify: bool | str = True,
         max_attempts: int = MAX_UPLOAD_ATTEMPTS,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
     ) -> None:
         """Configure the uploader.
 
@@ -55,6 +56,13 @@ class CloudUploader:
             cache: the shared :class:`EdgeCache`.
             verify: TLS verification - True (default), or a CA bundle path for mTLS.
             max_attempts: backoff attempts per network operation.
+            client_factory: optional zero-arg callable returning an
+                :class:`httpx.AsyncClient` used as an async context manager for a
+                sync cycle. Defaults to a standard client honouring
+                ``timeout``/``verify``. Provided as a dependency-injection seam so
+                tests can drive the uploader against an in-process ASGI app (e.g.
+                ``httpx.AsyncClient(transport=httpx.ASGITransport(app=...))``). The
+                production behaviour is unchanged when omitted.
         """
         self.cloud_url = cloud_url.rstrip("/")
         self.lab_id = lab_id
@@ -63,7 +71,14 @@ class CloudUploader:
         self.model_cache = ModelCache(cache)
         self.verify = verify
         self.max_attempts = max_attempts
+        self._client_factory = client_factory
         self._last_sync: str | None = None
+
+    def _new_client(self) -> httpx.AsyncClient:
+        """Create the httpx client for a sync cycle (injectable for tests)."""
+        if self._client_factory is not None:
+            return self._client_factory()
+        return httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self.verify)
 
     @property
     def last_sync(self) -> str | None:
@@ -97,7 +112,7 @@ class CloudUploader:
             logger.warning("CloudUploader: cloud_url/token not configured; skipping upload")
             return self._metrics(0, 0, 0, started, offline=True)
 
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self.verify) as client:
+        async with self._new_client() as client:
             while True:
                 pending = self.cache.get_pending_uploads(limit=BATCH_SIZE)
                 if not pending:
@@ -166,20 +181,36 @@ class CloudUploader:
         return False
 
     def _build_batch_payload(self, pending: list[dict[str, Any]]) -> tuple[dict[str, Any], int]:
-        """Shape pending rows into a :class:`QCBatchUpload`-compatible payload."""
+        """Shape pending rows into a :class:`QCBatchUpload`-compatible payload.
+
+        The cloud's batch endpoint validates each record as a full
+        ``QCDataInput`` (it re-evaluates them server-side). Pending rows persist
+        only a subset of columns, so the original inbound fields are recovered
+        from the stored ``evaluation_result["qc_input"]`` envelope when the
+        result was saved via :meth:`EdgeCache.save_qc_result` with the QC input
+        embedded. Missing fields fall back to the row columns and conservative
+        defaults so older rows still produce a well-formed (if approximate)
+        record rather than failing the whole batch.
+        """
         records = []
         for r in pending:
+            eval_result = r.get("evaluation_result")
+            qc_input = eval_result.get("qc_input") if isinstance(eval_result, dict) else None
+            qc_input = qc_input if isinstance(qc_input, dict) else {}
             records.append(
                 {
-                    "row_id": r.get("id"),
-                    "lab_id": r.get("lab_id"),
-                    "analyzer_id": r.get("analyzer_id"),
-                    "analyte_code": r.get("analyte_code"),
-                    "qc_lot_id": r.get("qc_lot_id"),
-                    "result_value": r.get("result_value"),
-                    "qc_status": r.get("qc_status"),
-                    "evaluation_result": r.get("evaluation_result"),
-                    "timestamp": r.get("timestamp"),
+                    "lab_id": qc_input.get("lab_id") or r.get("lab_id"),
+                    "analyzer_id": qc_input.get("analyzer_id") or r.get("analyzer_id"),
+                    "analyte_code": qc_input.get("analyte_code") or r.get("analyte_code"),
+                    "analyte_type": qc_input.get("analyte_type", "serology"),
+                    "qc_lot_id": qc_input.get("qc_lot_id") or r.get("qc_lot_id") or "UNKNOWN",
+                    "qc_level": qc_input.get("qc_level", "NORMAL"),
+                    "result_value": qc_input.get("result_value", r.get("result_value")),
+                    "target_value": qc_input.get("target_value", r.get("result_value")),
+                    "sd_value": qc_input.get("sd_value", 1.0),
+                    "operator_id": qc_input.get("operator_id", "EDGE-SYNC"),
+                    "correlation_id": qc_input.get("correlation_id"),
+                    "timestamp": qc_input.get("timestamp") or r.get("timestamp"),
                 }
             )
         payload = {
@@ -206,7 +237,7 @@ class CloudUploader:
         updated: list[str] = []
         url = f"{self.cloud_url}/api/v1/labs/{self.lab_id}/models"
         try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self.verify) as client:
+            async with self._new_client() as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code != 200:
                     logger.warning("pull_model_updates: cloud returned {}", resp.status_code)
@@ -254,7 +285,7 @@ class CloudUploader:
         url = f"{self.cloud_url}/api/v1/labs/{self.lab_id}/control-limits"
         cached = 0
         try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT, verify=self.verify) as client:
+            async with self._new_client() as client:
                 resp = await client.get(url, headers=self._headers())
                 if resp.status_code != 200:
                     logger.warning("pull_control_limits: cloud returned {}", resp.status_code)

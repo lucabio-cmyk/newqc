@@ -54,6 +54,12 @@ jobs:
         # package, which collides in a single pytest invocation.
         run: pytest qconnect-ai-cloud/cloud/tests -q
 
+      - name: Test integration
+        # Cross-project edge<->cloud integration tests. Kept as a separate
+        # invocation for clearer CI output (the `integration_tests` package
+        # name does not collide with the per-project `tests` packages).
+        run: pytest integration_tests -q
+
   lint:
     name: lint (black + ruff)
     runs-on: ubuntu-latest

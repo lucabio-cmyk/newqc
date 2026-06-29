@@ -159,7 +159,10 @@ class EdgeCache:
                         str(qc_data.get("qc_lot_id", "")),
                         _as_float(qc_data.get("result_value")),
                         str(result.get("qc_status", "")),
-                        json.dumps(result, default=str),
+                        # Embed the original QC input alongside the response so the
+                        # cloud-sync uploader can reconstruct a faithful QCDataInput
+                        # (target/sd/analyte_type/operator), not lossy defaults.
+                        json.dumps({**result, "qc_input": qc_data}, default=str),
                         str(ts),
                     ),
                 )

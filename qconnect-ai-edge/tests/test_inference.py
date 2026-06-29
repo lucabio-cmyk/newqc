@@ -182,6 +182,40 @@ def test_edge_cache_roundtrip(tmp_path) -> None:
         assert cache.count_pending_uploads() == 0
 
 
+def test_save_qc_result_embeds_full_qc_input(tmp_path) -> None:
+    """The real save path must persist the full QC input so the cloud-sync
+    uploader can reconstruct a faithful QCDataInput (correct target/sd/type),
+    not lossy defaults. Regression guard for the edge->cloud sync contract.
+    """
+    db_path = os.path.join(str(tmp_path), "embed.db")
+    with EdgeCache(db_path) as cache:
+        qc_data = {
+            "lab_id": "lab-1",
+            "analyzer_id": "AN-1",
+            "analyte_code": "HCV-AB",
+            "analyte_type": "serology",
+            "qc_lot_id": "LOT-1",
+            "qc_level": "NORMAL",
+            "result_value": 1.45,
+            "target_value": 1.50,
+            "sd_value": 0.08,
+            "operator_id": "EMP1",
+            "timestamp": "2026-03-15T09:30:00+00:00",
+        }
+        result = {"qc_status": "PASS", "severity": "LOW", "confidence": 0.9}
+        cache.save_qc_result(qc_data, result)
+
+        rec = cache.get_pending_uploads()[0]["evaluation_result"]
+        # Response keys are still present at the top level (additive embed).
+        assert rec["qc_status"] == "PASS"
+        # The full input is embedded with the real (non-default) statistics.
+        embedded = rec["qc_input"]
+        assert embedded["target_value"] == 1.50
+        assert embedded["sd_value"] == 0.08
+        assert embedded["analyte_type"] == "serology"
+        assert embedded["operator_id"] == "EMP1"
+
+
 def test_edge_cache_history_and_summary(tmp_path) -> None:
     db_path = os.path.join(str(tmp_path), "hist.db")
     with EdgeCache(db_path) as cache:
